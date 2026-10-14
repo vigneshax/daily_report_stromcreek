@@ -17,7 +17,7 @@ import sys
 import datetime
 from collections import Counter, defaultdict
 
-ISSUE_CATEGORIES = ("OCR Issue", "PO Issue", "Storm Creek Issue")
+ISSUE_CATEGORIES = ("OCR Issue", "PO Issue", "Storm Creek Issue", "OCR / Email Format")
 
 THEME_BUCKETS = {
     "STC (State To Credit)": r"\bSTC\b|state to credit",
@@ -69,6 +69,7 @@ def daily_trend(rows):
         ocr = sum(1 for r in recs if r["Issue related"] == "OCR Issue")
         po = sum(1 for r in recs if r["Issue related"] == "PO Issue")
         sc = sum(1 for r in recs if r["Issue related"] == "Storm Creek Issue")
+        ocr += sum(1 for r in recs if r["Issue related"] == "OCR / Email Format")
         out.append(
             dict(date=d, total=total, accurate=acc, ocr=ocr, po=po, sc=sc,
                  accuracy_pct=(acc / total * 100 if total else 0))
@@ -143,6 +144,44 @@ def render_report(rows, report_date):
     trend_word = "improved" if recent_pct > first_pct else "declined"
     lines.append(f"- Trend: accuracy has **{trend_word}** by "
                  f"{abs(recent_pct - first_pct):.1f} points since the start of this window.")
+    lines.append("")
+
+    # Latest day and 7-logged-day windows
+    def pct(rs):
+        return sum(1 for r in rs if r["Issue related"] == "Accurate Orders") / len(rs) * 100 if rs else 0
+    days = [d["date"] for d in trend]
+    latest = days[-1]
+    last7 = set(days[-7:])
+    prev7 = set(days[-14:-7])
+    r_latest = [r for r in rows if r["_date"] == latest]
+    r_l7 = [r for r in rows if r["_date"] in last7]
+    r_p7 = [r for r in rows if r["_date"] in prev7]
+    lines.append("## Latest day and weekly comparison")
+    lines.append(f"- Latest logged day ({latest}): **{pct(r_latest):.1f}%** ({len(r_latest)} orders)")
+    lines.append(f"- Last 7 logged days: **{pct(r_l7):.1f}%** ({len(r_l7)} orders)")
+    if r_p7:
+        lines.append(f"- Prior 7 logged days: **{pct(r_p7):.1f}%** ({len(r_p7)} orders); "
+                     f"change {pct(r_l7) - pct(r_p7):+.1f} pts")
+    unl = sum(1 for r in rows if not r["Issue related"].strip())
+    lines.append(f"- Rows with no 'Issue related' label (counted as not accurate, e.g. duplicates): {unl}")
+    l7_issues = [r for r in r_l7 if r["Issue related"] in ISSUE_CATEGORIES]
+    l7_themes = theme_breakdown(l7_issues)
+    p7_themes = theme_breakdown([r for r in r_p7 if r["Issue related"] in ISSUE_CATEGORIES])
+    lines.append("")
+    lines.append("Top error themes, last 7 logged days (vs prior 7):")
+    lines.append("")
+    lines.append("| Theme | Last 7d | Prior 7d |")
+    lines.append("|---|---|---|")
+    for name, c in l7_themes.most_common(8):
+        lines.append(f"| {name} | {c} | {p7_themes.get(name, 0)} |")
+    lines.append("")
+    d7 = distributor_breakdown(r_l7, min_orders=8)
+    lines.append("Weakest distributors, last 7 logged days (8+ orders):")
+    lines.append("")
+    lines.append("| Distributor | Orders | Accuracy % |")
+    lines.append("|---|---|---|")
+    for d in d7[:8]:
+        lines.append(f"| {d['distributor']} | {d['total']} | {d['accuracy_pct']:.1f}% |")
     lines.append("")
 
     lines.append("## Daily trend")
