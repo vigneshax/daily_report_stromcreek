@@ -17,7 +17,7 @@ import sys
 import datetime
 from collections import Counter, defaultdict
 
-ISSUE_CATEGORIES = ("OCR Issue", "PO Issue", "Storm Creek Issue")
+ISSUE_CATEGORIES = ("OCR Issue", "PO Issue", "Storm Creek Issue", "OCR / Email Format")
 
 THEME_BUCKETS = {
     "STC (State To Credit)": r"\bSTC\b|state to credit",
@@ -42,6 +42,9 @@ def parse_date(s):
 def load_rows(csv_path):
     rows = [r for r in csv.DictReader(open(csv_path, newline="", encoding="utf-8"))]
     rows = [r for r in rows if r["Date"].strip()]
+    # Rows with no "Issue related" verdict (rejected files, duplicates, pending)
+    # are not reviewed orders; keep them out of accuracy denominators.
+    rows = [r for r in rows if r["Issue related"].strip()]
     for r in rows:
         r["_date"] = parse_date(r["Date"])
     return rows
@@ -143,6 +146,18 @@ def render_report(rows, report_date):
     trend_word = "improved" if recent_pct > first_pct else "declined"
     lines.append(f"- Trend: accuracy has **{trend_word}** by "
                  f"{abs(recent_pct - first_pct):.1f} points since the start of this window.")
+    lines.append("")
+
+    last = trend[-1]
+    prev7 = trend[-8:-1]
+    p7_total = sum(d["total"] for d in prev7)
+    p7_pct = sum(d["accurate"] for d in prev7) / p7_total * 100 if p7_total else 0
+    lines.append(f"- Latest day ({last['date']}): **{last['accuracy_pct']:.1f}%** "
+                 f"({last['accurate']}/{last['total']}) vs prior 7 logged days {p7_pct:.1f}%")
+    last_rows = [r for r in rows if r["_date"] == last["date"] and r["Issue related"] in ISSUE_CATEGORIES]
+    lt = theme_breakdown(last_rows)
+    if lt:
+        lines.append("- Top themes on latest day: " + ", ".join(f"{k} ({v})" for k, v in lt.most_common(3)))
     lines.append("")
 
     lines.append("## Daily trend")
