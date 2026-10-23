@@ -145,6 +145,20 @@ def render_report(rows, report_date):
                  f"{abs(recent_pct - first_pct):.1f} points since the start of this window.")
     lines.append("")
 
+    last = trend[-1]
+    last_rows = [r for r in issue_rows if r["_date"] == last["date"]]
+    last_themes = theme_breakdown(last_rows)
+    prev7 = trend[-8:-1]
+    p7_total = sum(d["total"] for d in prev7)
+    p7_pct = sum(d["accurate"] for d in prev7) / p7_total * 100 if p7_total else 0
+    lines.append(f"## Latest logged day ({last['date']})")
+    lines.append(f"- Accuracy: **{last['accuracy_pct']:.1f}%** ({last['accurate']}/{last['total']}); "
+                 f"prior 7 logged days averaged {p7_pct:.1f}%")
+    lines.append(f"- Flagged: {last['ocr']} OCR, {last['po']} PO, {last['sc']} Storm Creek")
+    if last_themes:
+        lines.append("- Top themes: " + ", ".join(f"{n} ({c})" for n, c in last_themes.most_common(4)))
+    lines.append("")
+
     lines.append("## Daily trend")
     lines.append("")
     lines.append("| Date | Orders | Accurate | Accuracy % | OCR Issue | PO Issue | Storm Creek Issue |")
