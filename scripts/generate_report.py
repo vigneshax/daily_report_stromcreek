@@ -17,7 +17,8 @@ import sys
 import datetime
 from collections import Counter, defaultdict
 
-ISSUE_CATEGORIES = ("OCR Issue", "PO Issue", "Storm Creek Issue")
+ISSUE_CATEGORIES = ("OCR Issue", "PO Issue", "Storm Creek Issue", "OCR / Email Format")
+VALID_CATEGORIES = ISSUE_CATEGORIES + ("Accurate Orders",)
 
 THEME_BUCKETS = {
     "STC (State To Credit)": r"\bSTC\b|state to credit",
@@ -34,6 +35,9 @@ THEME_BUCKETS = {
 }
 
 
+EXCLUDED = Counter()
+
+
 def parse_date(s):
     m, d, y = s.strip().split("/")
     return datetime.date(int(y), int(m), int(d))
@@ -42,6 +46,13 @@ def parse_date(s):
 def load_rows(csv_path):
     rows = [r for r in csv.DictReader(open(csv_path, newline="", encoding="utf-8"))]
     rows = [r for r in rows if r["Date"].strip()]
+    # Rows with no Issue-related label are duplicates / rejected files / no-PO
+    # entries; they are excluded from accuracy so they don't count as accurate or wrong.
+    global EXCLUDED
+    EXCLUDED = Counter(
+        (r["AX Comments"].strip() or r["Order Status"].strip() or "(blank)")[:30]
+        for r in rows if r["Issue related"].strip() not in VALID_CATEGORIES)
+    rows = [r for r in rows if r["Issue related"].strip() in VALID_CATEGORIES]
     for r in rows:
         r["_date"] = parse_date(r["Date"])
     return rows
@@ -66,7 +77,7 @@ def daily_trend(rows):
         recs = by_date[d]
         total = len(recs)
         acc = sum(1 for r in recs if r["Issue related"] == "Accurate Orders")
-        ocr = sum(1 for r in recs if r["Issue related"] == "OCR Issue")
+        ocr = sum(1 for r in recs if r["Issue related"] in ("OCR Issue", "OCR / Email Format"))
         po = sum(1 for r in recs if r["Issue related"] == "PO Issue")
         sc = sum(1 for r in recs if r["Issue related"] == "Storm Creek Issue")
         out.append(
@@ -108,6 +119,40 @@ def associate_breakdown(rows):
     return out
 
 
+def pct(recs):
+    return sum(1 for r in recs if r["Issue related"] == "Accurate Orders") / len(recs) * 100 if recs else 0
+
+
+def latest_day_section(rows, trend):
+    """Focus of the daily report: the most recent logged day vs. recent baselines."""
+    last = trend[-1]["date"]
+    day = [r for r in rows if r["_date"] == last]
+    prev5 = [r for r in rows if r["_date"] in {d["date"] for d in trend[-6:-1]}]
+    wk = [r for r in rows if r["_date"] > last - datetime.timedelta(days=7)]
+    pwk = [r for r in rows if last - datetime.timedelta(days=14) < r["_date"] <= last - datetime.timedelta(days=7)]
+    flagged = [r for r in day if r["Issue related"] in ISSUE_CATEGORIES]
+    L = [f"## Latest day: {last}", ""]
+    L.append(f"- Accuracy: **{pct(day):.1f}%** ({sum(1 for r in day if r['Issue related']=='Accurate Orders')}/{len(day)})")
+    L.append(f"- Previous 5 logged days: {pct(prev5):.1f}%  (delta {pct(day)-pct(prev5):+.1f} pts)")
+    L.append(f"- Last 7 days: {pct(wk):.1f}% vs prior 7 days: {pct(pwk):.1f}%  (delta {pct(wk)-pct(pwk):+.1f} pts)")
+    L.append("")
+    if flagged:
+        L.append("Themes in the day's flagged orders:")
+        L.append("")
+        for name, c in theme_breakdown(flagged).most_common(6):
+            wk_flag = [r for r in wk if r["Issue related"] in ISSUE_CATEGORIES]
+            L.append(f"- {name}: {c} (7-day avg/day: {theme_breakdown(wk_flag)[name]/max(1,len({r['_date'] for r in wk})):.1f})")
+        L.append("")
+        L.append("Distributors with flagged orders that day: " + ", ".join(
+            f"{d} ({c})" for d, c in Counter(r["Distributor"] for r in flagged).most_common(8)))
+        L.append("")
+    L.append("Associates that day: " + ", ".join(
+        f"{a} {pct([r for r in day if r['Processed By']==a]):.0f}% ({sum(1 for r in day if r['Processed By']==a)})"
+        for a in sorted({r["Processed By"] for r in day if r["Processed By"].strip()})))
+    L.append("")
+    return L
+
+
 def render_report(rows, report_date):
     trend = daily_trend(rows)
     issue_rows = [r for r in rows if r["Issue related"] in ISSUE_CATEGORIES]
@@ -135,6 +180,11 @@ def render_report(rows, report_date):
     lines.append(f"Data source: Live Orders sheet, {total} orders logged, "
                  f"{trend[0]['date']} to {trend[-1]['date']}.")
     lines.append("")
+    if EXCLUDED:
+        lines.append(f"Excluded from accuracy (no Issue-related label): {sum(EXCLUDED.values())} rows "
+                     f"(" + ", ".join(f"{k}: {v}" for k, v in EXCLUDED.most_common(4)) + ").")
+        lines.append("")
+    lines.extend(latest_day_section(rows, trend))
     lines.append("## Headline")
     lines.append(f"- Overall accuracy (all logged orders): **{overall_pct:.1f}%** "
                  f"({acc_total}/{total})")
@@ -145,11 +195,11 @@ def render_report(rows, report_date):
                  f"{abs(recent_pct - first_pct):.1f} points since the start of this window.")
     lines.append("")
 
-    lines.append("## Daily trend")
+    lines.append("## Daily trend (last 21 logged days)")
     lines.append("")
     lines.append("| Date | Orders | Accurate | Accuracy % | OCR Issue | PO Issue | Storm Creek Issue |")
     lines.append("|---|---|---|---|---|---|---|")
-    for d in trend:
+    for d in trend[-21:]:
         lines.append(f"| {d['date']} | {d['total']} | {d['accurate']} | "
                      f"{d['accuracy_pct']:.1f}% | {d['ocr']} | {d['po']} | {d['sc']} |")
     lines.append("")
