@@ -17,7 +17,7 @@ import sys
 import datetime
 from collections import Counter, defaultdict
 
-ISSUE_CATEGORIES = ("OCR Issue", "PO Issue", "Storm Creek Issue")
+ISSUE_CATEGORIES = ("OCR Issue", "PO Issue", "Storm Creek Issue", "OCR / Email Format")
 
 THEME_BUCKETS = {
     "STC (State To Credit)": r"\bSTC\b|state to credit",
@@ -42,6 +42,9 @@ def parse_date(s):
 def load_rows(csv_path):
     rows = [r for r in csv.DictReader(open(csv_path, newline="", encoding="utf-8"))]
     rows = [r for r in rows if r["Date"].strip()]
+    # Rows with no "Issue related" value are rejected/duplicate/no-PO files,
+    # not scored orders; keep them out of the accuracy denominators.
+    rows = [r for r in rows if r["Issue related"].strip()]
     for r in rows:
         r["_date"] = parse_date(r["Date"])
     return rows
@@ -108,6 +111,17 @@ def associate_breakdown(rows):
     return out
 
 
+def window_stats(rows, start, end):
+    recs = [r for r in rows if start <= r["_date"] <= end]
+    acc = sum(1 for r in recs if r["Issue related"] == "Accurate Orders")
+    return len(recs), acc, (acc / len(recs) * 100 if recs else 0)
+
+
+def bottom_distributors(rows, start, min_orders=8, n=8):
+    recs = [r for r in rows if r["_date"] >= start]
+    return distributor_breakdown(recs, min_orders)[:n]
+
+
 def render_report(rows, report_date):
     trend = daily_trend(rows)
     issue_rows = [r for r in rows if r["Issue related"] in ISSUE_CATEGORIES]
@@ -145,11 +159,45 @@ def render_report(rows, report_date):
                  f"{abs(recent_pct - first_pct):.1f} points since the start of this window.")
     lines.append("")
 
-    lines.append("## Daily trend")
+    last = trend[-1]["date"]
+    t, a, p = window_stats(rows, last, last)
+    w1 = window_stats(rows, last - datetime.timedelta(days=6), last)
+    w0 = window_stats(rows, last - datetime.timedelta(days=13), last - datetime.timedelta(days=7))
+    lines.append(f"## Latest day ({last})")
+    lines.append(f"- Latest logged day: **{p:.1f}%** ({a}/{t})")
+    lines.append(f"- Trailing 7 days: **{w1[2]:.1f}%** ({w1[1]}/{w1[0]}) vs prior 7 days "
+                 f"**{w0[2]:.1f}%** ({w0[1]}/{w0[0]}) — {w1[2]-w0[2]:+.1f} pts")
+    ld = [r for r in issue_rows if r["_date"] == last]
+    lt = theme_breakdown(ld)
+    if lt:
+        lines.append("- Top themes on the latest day: " +
+                     ", ".join(f"{k} ({v})" for k, v in lt.most_common(5)))
+    lines.append("")
+    lines.append("Weakest accounts, trailing 14 days (8+ orders):")
+    lines.append("")
+    lines.append("| Distributor | Orders | Accuracy % |")
+    lines.append("|---|---|---|")
+    for d in bottom_distributors(rows, last - datetime.timedelta(days=13)):
+        lines.append(f"| {d['distributor']} | {d['total']} | {d['accuracy_pct']:.1f}% |")
+    lines.append("")
+
+    lines.append("## Weekly trend")
+    lines.append("")
+    lines.append("| Week starting (Mon) | Orders | Accuracy % |")
+    lines.append("|---|---|---|")
+    wk = defaultdict(list)
+    for r in rows:
+        wk[r["_date"] - datetime.timedelta(days=r["_date"].weekday())].append(r)
+    for w in sorted(wk):
+        n = len(wk[w]); ac = sum(1 for r in wk[w] if r["Issue related"] == "Accurate Orders")
+        lines.append(f"| {w} | {n} | {ac/n*100:.1f}% |")
+    lines.append("")
+
+    lines.append("## Daily trend (last 21 logged days)")
     lines.append("")
     lines.append("| Date | Orders | Accurate | Accuracy % | OCR Issue | PO Issue | Storm Creek Issue |")
     lines.append("|---|---|---|---|---|---|---|")
-    for d in trend:
+    for d in trend[-21:]:
         lines.append(f"| {d['date']} | {d['total']} | {d['accurate']} | "
                      f"{d['accuracy_pct']:.1f}% | {d['ocr']} | {d['po']} | {d['sc']} |")
     lines.append("")

@@ -8,7 +8,9 @@ Each run:
 2. Runs `scripts/generate_report.py` on that CSV to categorize errors ("Issue
    related" + recurring themes in "AX Comments"), compute per-day/per-distributor/
    per-associate accuracy, and flag where accuracy is weakest.
-3. Writes the result to `reports/YYYY-MM-DD.md`.
+3. Writes the result to `reports/YYYY-MM-DD.md`, plus a short hand-written "where improvement is needed" analysis of the latest day.
+
+The CSV export comes back base64-encoded from `download_file_content`; decode it before running the script. Rows with a blank "Issue related" (rejected/duplicate files) are excluded from accuracy.
 
 ## Regenerating a report manually
 
