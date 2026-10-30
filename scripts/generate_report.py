@@ -17,7 +17,7 @@ import sys
 import datetime
 from collections import Counter, defaultdict
 
-ISSUE_CATEGORIES = ("OCR Issue", "PO Issue", "Storm Creek Issue")
+ISSUE_CATEGORIES = ("OCR Issue", "PO Issue", "Storm Creek Issue", "OCR / Email Format")
 
 THEME_BUCKETS = {
     "STC (State To Credit)": r"\bSTC\b|state to credit",
@@ -43,6 +43,8 @@ def load_rows(csv_path):
     rows = [r for r in csv.DictReader(open(csv_path, newline="", encoding="utf-8"))]
     rows = [r for r in rows if r["Date"].strip()]
     for r in rows:
+        r["Issue related"] = r["Issue related"].strip()
+    for r in rows:
         r["_date"] = parse_date(r["Date"])
     return rows
 
@@ -66,7 +68,7 @@ def daily_trend(rows):
         recs = by_date[d]
         total = len(recs)
         acc = sum(1 for r in recs if r["Issue related"] == "Accurate Orders")
-        ocr = sum(1 for r in recs if r["Issue related"] == "OCR Issue")
+        ocr = sum(1 for r in recs if r["Issue related"] in ("OCR Issue", "OCR / Email Format"))
         po = sum(1 for r in recs if r["Issue related"] == "PO Issue")
         sc = sum(1 for r in recs if r["Issue related"] == "Storm Creek Issue")
         out.append(
@@ -109,6 +111,8 @@ def associate_breakdown(rows):
 
 
 def render_report(rows, report_date):
+    unclassified = [r for r in rows if not r["Issue related"]]
+    rows = [r for r in rows if r["Issue related"]]
     trend = daily_trend(rows)
     issue_rows = [r for r in rows if r["Issue related"] in ISSUE_CATEGORIES]
     themes = theme_breakdown(issue_rows)
@@ -145,11 +149,27 @@ def render_report(rows, report_date):
                  f"{abs(recent_pct - first_pct):.1f} points since the start of this window.")
     lines.append("")
 
+    lines.append(f"- Excluded {len(unclassified)} rows with no 'Issue related' value "
+                 "(duplicates / not yet reviewed) from accuracy math.")
+    latest = trend[-1]
+    prev7 = trend[-8:-1]
+    p7t = sum(d["total"] for d in prev7)
+    p7a = sum(d["accurate"] for d in prev7)
+    lines.append(f"- Latest day ({latest['date']}): **{latest['accuracy_pct']:.1f}%** "
+                 f"({latest['accurate']}/{latest['total']})"
+                 + (f" vs prior 7 logged days {p7a/p7t*100:.1f}%" if p7t else ""))
+    lines.append("")
+    lines.append(f"## Latest day ({latest['date']}) flagged-order themes")
+    lines.append("")
+    lr = [r for r in issue_rows if r["_date"] == latest["date"]]
+    for name, count in theme_breakdown(lr).most_common():
+        lines.append(f"- {name}: {count}")
+    lines.append("")
     lines.append("## Daily trend")
     lines.append("")
-    lines.append("| Date | Orders | Accurate | Accuracy % | OCR Issue | PO Issue | Storm Creek Issue |")
+    lines.append("| Date | Orders | Accurate | Accuracy % | OCR Issue (incl. email fmt) | PO Issue | Storm Creek Issue |")
     lines.append("|---|---|---|---|---|---|---|")
-    for d in trend:
+    for d in trend[-21:]:
         lines.append(f"| {d['date']} | {d['total']} | {d['accurate']} | "
                      f"{d['accuracy_pct']:.1f}% | {d['ocr']} | {d['po']} | {d['sc']} |")
     lines.append("")
