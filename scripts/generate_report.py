@@ -17,7 +17,7 @@ import sys
 import datetime
 from collections import Counter, defaultdict
 
-ISSUE_CATEGORIES = ("OCR Issue", "PO Issue", "Storm Creek Issue")
+ISSUE_CATEGORIES = ("OCR Issue", "PO Issue", "Storm Creek Issue", "OCR / Email Format")
 
 THEME_BUCKETS = {
     "STC (State To Credit)": r"\bSTC\b|state to credit",
@@ -31,6 +31,10 @@ THEME_BUCKETS = {
     "Ship Method": r"ship method|shipping method|carrier",
     "Company Name": r"company name",
     "Product ID / Part ID / SKU": r"product id|part id|\bsku\b",
+    "Ship Date": r"ship date",
+    "Order Type (blank/sample/etc.)": r"order type",
+    "PSST": r"\bpsst\b",
+    "FF / PO Total / Pricing": r"\bFF\b|po total|pricing",
 }
 
 
@@ -76,7 +80,7 @@ def daily_trend(rows):
     return out
 
 
-def distributor_breakdown(rows, min_orders=15):
+def distributor_breakdown(rows, min_orders=30):
     by_dist = defaultdict(list)
     for r in rows:
         if r["Distributor"].strip():
@@ -106,6 +110,47 @@ def associate_breakdown(rows):
                          accuracy_pct=acc / total * 100))
     out.sort(key=lambda x: -x["total"])
     return out
+
+
+def weekly_trend(rows):
+    by_wk = defaultdict(list)
+    for r in rows:
+        by_wk[r["_date"].isocalendar()[:2]].append(r)
+    out = []
+    for wk in sorted(by_wk):
+        recs = by_wk[wk]
+        lab = [r for r in recs if r["Issue related"]]
+        acc = sum(1 for r in recs if r["Issue related"] == "Accurate Orders")
+        out.append(dict(week=f"{wk[0]}-W{wk[1]:02d}", start=min(r["_date"] for r in recs),
+                        total=len(recs), labeled=len(lab), accurate=acc,
+                        pct=acc / len(lab) * 100 if lab else 0))
+    return out
+
+
+def window_section(title, rows_w, rows_prev, lines):
+    """Themes + distributors for a window, with comparison to the window before it."""
+    iss = [r for r in rows_w if r["Issue related"] in ISSUE_CATEGORIES]
+    iss_prev = [r for r in rows_prev if r["Issue related"] in ISSUE_CATEGORIES]
+    t, tp = theme_breakdown(iss), theme_breakdown(iss_prev)
+    lines.append(f"## {title}")
+    lines.append("")
+    lines.append(f"{len(iss)} flagged of {len(rows_w)} orders (prior window: {len(iss_prev)} of {len(rows_prev)}).")
+    lines.append("")
+    lines.append("| Theme | Count | % of flagged | Prior window % | Change (pts) |")
+    lines.append("|---|---|---|---|---|")
+    for name, c in t.most_common():
+        pct = c / len(iss) * 100 if iss else 0
+        pp = tp[name] / len(iss_prev) * 100 if iss_prev else 0
+        lines.append(f"| {name} | {c} | {pct:.1f}% | {pp:.1f}% | {pct-pp:+.1f} |")
+    lines.append("")
+    d = distributor_breakdown(rows_w, min_orders=8)
+    lines.append("Worst accounts in window (8+ orders):")
+    lines.append("")
+    lines.append("| Distributor | Orders | Accuracy % |")
+    lines.append("|---|---|---|")
+    for x in d[:8]:
+        lines.append(f"| {x['distributor']} | {x['total']} | {x['accuracy_pct']:.1f}% |")
+    lines.append("")
 
 
 def render_report(rows, report_date):
@@ -154,6 +199,33 @@ def render_report(rows, report_date):
                      f"{d['accuracy_pct']:.1f}% | {d['ocr']} | {d['po']} | {d['sc']} |")
     lines.append("")
 
+    wk = weekly_trend(rows)
+    lines.append("## Weekly trend (accuracy on labeled orders)")
+    lines.append("")
+    lines.append("| ISO week | Starts | Orders | Labeled | Accuracy % |")
+    lines.append("|---|---|---|---|---|")
+    for w in wk:
+        lines.append(f"| {w['week']} | {w['start']} | {w['total']} | {w['labeled']} | {w['pct']:.1f}% |")
+    lines.append("")
+    unl = [r for r in rows if not r["Issue related"]]
+    lines.append(f"Note: {len(unl)} orders have no 'Issue related' label "
+                 f"(mostly rejected/duplicate files: {Counter(r['Order Status'] for r in unl).most_common(3)}). "
+                 "Daily accuracy % below counts them in the denominator, as in earlier reports.")
+    lines.append("")
+    last_day = trend[-1]["date"]
+    days = sorted({r["_date"] for r in rows})
+    w7, p7 = days[-7:], days[-14:-7]
+    window_section(f"Last 7 logged days ({w7[0]} to {w7[-1]}) vs prior 7",
+                   [r for r in rows if r["_date"] in w7], [r for r in rows if r["_date"] in p7], lines)
+    day_rows = [r for r in rows if r["_date"] == last_day]
+    di = [r for r in day_rows if r["Issue related"] in ISSUE_CATEGORIES]
+    lines.append(f"## Latest logged day: {last_day}")
+    lines.append("")
+    lines.append(f"{len(day_rows)} orders, {trend[-1]['accuracy_pct']:.1f}% accurate, {len(di)} flagged.")
+    lines.append("")
+    for r in di[:25]:
+        lines.append(f"- {r['Distributor']} / PO {r['PO Number']} ({r['Issue related']}, {r['Processed By']}): {r['AX Comments'][:140]}")
+    lines.append("")
     lines.append("## Error categorization (recurring themes in flagged orders)")
     lines.append("")
     lines.append(f"Out of {len(issue_rows)} flagged orders, comment themes break down as "
@@ -167,7 +239,7 @@ def render_report(rows, report_date):
 
     lines.append("## Accounts/distributors needing the most attention")
     lines.append("")
-    lines.append("(Accounts with 15+ orders in the logged window, sorted worst first)")
+    lines.append("(Accounts with 30+ orders in the logged window, sorted worst first)")
     lines.append("")
     lines.append("| Distributor | Orders | Accuracy % |")
     lines.append("|---|---|---|")
