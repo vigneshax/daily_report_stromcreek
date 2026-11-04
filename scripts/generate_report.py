@@ -17,7 +17,7 @@ import sys
 import datetime
 from collections import Counter, defaultdict
 
-ISSUE_CATEGORIES = ("OCR Issue", "PO Issue", "Storm Creek Issue")
+ISSUE_CATEGORIES = ("OCR Issue", "PO Issue", "Storm Creek Issue", "OCR / Email Format")
 
 THEME_BUCKETS = {
     "STC (State To Credit)": r"\bSTC\b|state to credit",
@@ -41,7 +41,8 @@ def parse_date(s):
 
 def load_rows(csv_path):
     rows = [r for r in csv.DictReader(open(csv_path, newline="", encoding="utf-8"))]
-    rows = [r for r in rows if r["Date"].strip()]
+    # Only rows a reviewer classified count toward accuracy (blank = rejected/duplicate files)
+    rows = [r for r in rows if r["Date"].strip() and r["Issue related"].strip()]
     for r in rows:
         r["_date"] = parse_date(r["Date"])
     return rows
@@ -145,11 +146,31 @@ def render_report(rows, report_date):
                  f"{abs(recent_pct - first_pct):.1f} points since the start of this window.")
     lines.append("")
 
-    lines.append("## Daily trend")
+    last = trend[-1]
+    prev7 = trend[-8:-1]
+    p7t = sum(d["total"] for d in prev7); p7a = sum(d["accurate"] for d in prev7)
+    lines.append(f"- Latest logged day ({last['date']}): **{last['accuracy_pct']:.1f}%** "
+                 f"({last['accurate']}/{last['total']}); prior 7 logged days: "
+                 f"**{(p7a/p7t*100 if p7t else 0):.1f}%**")
+    lines.append("")
+    lines.append("## Weekly trend")
+    lines.append("")
+    lines.append("| Week | Orders | Accuracy % | OCR | PO | SC | OCR/Email |")
+    lines.append("|---|---|---|---|---|---|---|")
+    wk = defaultdict(list)
+    for r in rows:
+        wk[int(r["Week#"])].append(r)
+    for w in sorted(wk):
+        rs = wk[w]; n = len(rs)
+        c = Counter(r["Issue related"] for r in rs)
+        lines.append(f"| {w} | {n} | {c['Accurate Orders']/n*100:.1f}% | {c['OCR Issue']} | "
+                     f"{c['PO Issue']} | {c['Storm Creek Issue']} | {c['OCR / Email Format']} |")
+    lines.append("")
+    lines.append("## Daily trend (last 14 logged days)")
     lines.append("")
     lines.append("| Date | Orders | Accurate | Accuracy % | OCR Issue | PO Issue | Storm Creek Issue |")
     lines.append("|---|---|---|---|---|---|---|")
-    for d in trend:
+    for d in trend[-14:]:
         lines.append(f"| {d['date']} | {d['total']} | {d['accurate']} | "
                      f"{d['accuracy_pct']:.1f}% | {d['ocr']} | {d['po']} | {d['sc']} |")
     lines.append("")
