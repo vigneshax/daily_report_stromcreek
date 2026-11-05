@@ -17,7 +17,7 @@ import sys
 import datetime
 from collections import Counter, defaultdict
 
-ISSUE_CATEGORIES = ("OCR Issue", "PO Issue", "Storm Creek Issue")
+ISSUE_CATEGORIES = ("OCR Issue", "PO Issue", "Storm Creek Issue", "OCR / Email Format")
 
 THEME_BUCKETS = {
     "STC (State To Credit)": r"\bSTC\b|state to credit",
@@ -34,6 +34,9 @@ THEME_BUCKETS = {
 }
 
 
+UNSCORED = 0
+
+
 def parse_date(s):
     m, d, y = s.strip().split("/")
     return datetime.date(int(y), int(m), int(d))
@@ -42,6 +45,11 @@ def parse_date(s):
 def load_rows(csv_path):
     rows = [r for r in csv.DictReader(open(csv_path, newline="", encoding="utf-8"))]
     rows = [r for r in rows if r["Date"].strip()]
+    # Only orders a reviewer classified count toward accuracy. Blank "Issue related"
+    # rows are duplicates / rejected files / no-PO and are excluded from the denominator.
+    global UNSCORED
+    UNSCORED = sum(1 for r in rows if not r["Issue related"].strip())
+    rows = [r for r in rows if r["Issue related"].strip()]
     for r in rows:
         r["_date"] = parse_date(r["Date"])
     return rows
@@ -67,7 +75,7 @@ def daily_trend(rows):
         total = len(recs)
         acc = sum(1 for r in recs if r["Issue related"] == "Accurate Orders")
         ocr = sum(1 for r in recs if r["Issue related"] == "OCR Issue")
-        po = sum(1 for r in recs if r["Issue related"] == "PO Issue")
+        po = sum(1 for r in recs if r["Issue related"] in ("PO Issue", "OCR / Email Format"))
         sc = sum(1 for r in recs if r["Issue related"] == "Storm Creek Issue")
         out.append(
             dict(date=d, total=total, accurate=acc, ocr=ocr, po=po, sc=sc,
@@ -76,7 +84,7 @@ def daily_trend(rows):
     return out
 
 
-def distributor_breakdown(rows, min_orders=15):
+def distributor_breakdown(rows, min_orders=30):
     by_dist = defaultdict(list)
     for r in rows:
         if r["Distributor"].strip():
@@ -167,13 +175,74 @@ def render_report(rows, report_date):
 
     lines.append("## Accounts/distributors needing the most attention")
     lines.append("")
-    lines.append("(Accounts with 15+ orders in the logged window, sorted worst first)")
+    lines.append("(Accounts with 30+ orders in the logged window, sorted worst first)")
     lines.append("")
     lines.append("| Distributor | Orders | Accuracy % |")
     lines.append("|---|---|---|")
     for d in dists[:10]:
         lines.append(f"| {d['distributor']} | {d['total']} | {d['accuracy_pct']:.1f}% |")
     lines.append("")
+
+    # ---- Week-over-week and window comparison ----
+    by_week = defaultdict(list)
+    for r in rows:
+        by_week[r["Week#"]].append(r)
+    lines.append("## Weekly trend")
+    lines.append("")
+    lines.append("| Week# | Orders | Accuracy % | OCR | PO/Email | SC |")
+    lines.append("|---|---|---|---|---|---|")
+    for w in sorted(by_week, key=lambda x: int(x) if x.isdigit() else 99):
+        recs = by_week[w]; n = len(recs)
+        a = sum(1 for r in recs if r["Issue related"] == "Accurate Orders")
+        lines.append(f"| {w} | {n} | {a/n*100:.1f}% | "
+                     f"{sum(1 for r in recs if r['Issue related']=='OCR Issue')} | "
+                     f"{sum(1 for r in recs if r['Issue related'] in ('PO Issue','OCR / Email Format'))} | "
+                     f"{sum(1 for r in recs if r['Issue related']=='Storm Creek Issue')} |")
+    lines.append("")
+
+    last_day = trend[-1]["date"]
+    days = [d["date"] for d in trend]
+    l7 = set(days[-7:]); p7 = set(days[-14:-7])
+    r_l7 = [r for r in rows if r["_date"] in l7]
+    r_p7 = [r for r in rows if r["_date"] in p7]
+    def pct(rs):
+        return sum(1 for r in rs if r["Issue related"] == "Accurate Orders") / len(rs) * 100 if rs else 0
+    lines.append(f"## Latest day ({last_day}) vs recent windows")
+    lines.append("")
+    lines.append(f"- Latest day: **{trend[-1]['accuracy_pct']:.1f}%** ({trend[-1]['accurate']}/{trend[-1]['total']})")
+    lines.append(f"- Last 7 logged days: **{pct(r_l7):.1f}%** ({len(r_l7)} orders)")
+    lines.append(f"- Previous 7 logged days: **{pct(r_p7):.1f}%** ({len(r_p7)} orders) -> change {pct(r_l7)-pct(r_p7):+.1f} pts")
+    lines.append(f"- Excluded from scoring (duplicates / rejected / no PO, blank Issue): {UNSCORED} rows")
+    lines.append("")
+    lines.append("### Theme movement (flagged orders, last 7 days vs previous 7 days)")
+    lines.append("")
+    t_l = theme_breakdown([r for r in r_l7 if r["Issue related"] in ISSUE_CATEGORIES])
+    t_p = theme_breakdown([r for r in r_p7 if r["Issue related"] in ISSUE_CATEGORIES])
+    lines.append("| Theme | Last 7d | Prev 7d | Change |")
+    lines.append("|---|---|---|---|")
+    for name in sorted(THEME_BUCKETS, key=lambda n: -t_l[n]):
+        lines.append(f"| {name} | {t_l[name]} | {t_p[name]} | {t_l[name]-t_p[name]:+d} |")
+    lines.append("")
+    lines.append("### Distributor movement (30+ orders overall; last 7d vs previous 7d)")
+    lines.append("")
+    lines.append("| Distributor | Last 7d orders | Last 7d acc | Prev 7d acc | Change |")
+    lines.append("|---|---|---|---|---|")
+    mv = []
+    for dn in {d["distributor"] for d in dists}:
+        a = [r for r in r_l7 if r["Distributor"] == dn]; b = [r for r in r_p7 if r["Distributor"] == dn]
+        if len(a) >= 8 and len(b) >= 8:
+            mv.append((pct(a)-pct(b), dn, len(a), pct(a), pct(b)))
+    mv.sort()
+    for ch, dn, n, pa, pb in mv[:6] + mv[-3:]:
+        lines.append(f"| {dn} | {n} | {pa:.1f}% | {pb:.1f}% | {ch:+.1f} |")
+    lines.append("")
+    sec = Counter(r["Secondary Cat for OCR Issue"].strip().lower() for r in rows if r["Secondary Cat for OCR Issue"].strip())
+    if sec:
+        lines.append("### Reviewer secondary categories (OCR issues, where filled in)")
+        lines.append("")
+        for k, v in sec.most_common(8):
+            lines.append(f"- {k}: {v}")
+        lines.append("")
 
     lines.append("## Associate accuracy (orders processed)")
     lines.append("")
