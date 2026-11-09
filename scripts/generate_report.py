@@ -17,7 +17,7 @@ import sys
 import datetime
 from collections import Counter, defaultdict
 
-ISSUE_CATEGORIES = ("OCR Issue", "PO Issue", "Storm Creek Issue")
+ISSUE_CATEGORIES = ("OCR Issue", "OCR / Email Format", "PO Issue", "Storm Creek Issue")
 
 THEME_BUCKETS = {
     "STC (State To Credit)": r"\bSTC\b|state to credit",
@@ -108,81 +108,157 @@ def associate_breakdown(rows):
     return out
 
 
+def pct(a, b):
+    return a / b * 100 if b else 0.0
+
+
+def acc_of(recs):
+    return sum(1 for r in recs if r["Issue related"] == "Accurate Orders")
+
+
+def week_trend(rows):
+    by = defaultdict(list)
+    for r in rows:
+        by[r["_date"].isocalendar()[:2]].append(r)
+    return [(k, v) for k, v in sorted(by.items())]
+
+
 def render_report(rows, report_date):
     trend = daily_trend(rows)
     issue_rows = [r for r in rows if r["Issue related"] in ISSUE_CATEGORIES]
-    themes = theme_breakdown(issue_rows)
-    dists = distributor_breakdown(rows)
-    assocs = associate_breakdown(rows)
-
+    dates = sorted({r["_date"] for r in rows})
+    latest = dates[-1]
+    last7 = set(dates[-7:])
+    prev7 = set(dates[-14:-7])
+    last14 = set(dates[-14:])
     total = len(rows)
-    acc_total = sum(1 for r in rows if r["Issue related"] == "Accurate Orders")
-    overall_pct = acc_total / total * 100 if total else 0
+    acc_total = acc_of(rows)
+    unlabeled = [r for r in rows if not r["Issue related"].strip()]
+    labeled = [r for r in rows if r["Issue related"].strip()]
 
-    recent = trend[-3:] if len(trend) >= 3 else trend
-    recent_total = sum(d["total"] for d in recent)
-    recent_acc = sum(d["accurate"] for d in recent)
-    recent_pct = recent_acc / recent_total * 100 if recent_total else 0
+    def window(ds):
+        recs = [r for r in labeled if r["_date"] in ds]
+        return acc_of(recs), len(recs)
 
-    first = trend[:3] if len(trend) >= 3 else trend
-    first_total = sum(d["total"] for d in first)
-    first_acc = sum(d["accurate"] for d in first)
-    first_pct = first_acc / first_total * 100 if first_total else 0
-
-    lines = []
-    lines.append(f"# Storm Creek OCR Daily Report — {report_date}")
-    lines.append("")
-    lines.append(f"Data source: Live Orders sheet, {total} orders logged, "
-                 f"{trend[0]['date']} to {trend[-1]['date']}.")
+    la, ln = window({latest})
+    a7, n7 = window(last7)
+    p7, pn7 = window(prev7)
+    lines = [f"# Storm Creek OCR Daily Report — {report_date}", ""]
+    lines.append(f"Data source: Live Orders sheet, {total} orders logged "
+                 f"({len(unlabeled)} not yet labelled by reviewers and excluded from "
+                 f"accuracy), {dates[0]} to {latest}. Accuracy = Accurate Orders / labelled orders.")
     lines.append("")
     lines.append("## Headline")
-    lines.append(f"- Overall accuracy (all logged orders): **{overall_pct:.1f}%** "
-                 f"({acc_total}/{total})")
-    lines.append(f"- Last 3 logged days: **{recent_pct:.1f}%** ({recent_acc}/{recent_total})")
-    lines.append(f"- First 3 logged days: **{first_pct:.1f}%** ({first_acc}/{first_total})")
-    trend_word = "improved" if recent_pct > first_pct else "declined"
-    lines.append(f"- Trend: accuracy has **{trend_word}** by "
-                 f"{abs(recent_pct - first_pct):.1f} points since the start of this window.")
+    lines.append(f"- Latest logged day ({latest}): **{pct(la, ln):.1f}%** ({la}/{ln})")
+    lines.append(f"- Last 7 logged days: **{pct(a7, n7):.1f}%** ({a7}/{n7}); "
+                 f"previous 7: {pct(p7, pn7):.1f}% ({p7}/{pn7}) -> "
+                 f"{'up' if pct(a7, n7) >= pct(p7, pn7) else 'DOWN'} "
+                 f"{abs(pct(a7, n7) - pct(p7, pn7)):.1f} pts")
+    lines.append(f"- Overall since {dates[0]}: **{pct(acc_of(labeled), len(labeled)):.1f}%** "
+                 f"({acc_of(labeled)}/{len(labeled)})")
     lines.append("")
 
-    lines.append("## Daily trend")
+    lines.append("## Weekly trend")
     lines.append("")
-    lines.append("| Date | Orders | Accurate | Accuracy % | OCR Issue | PO Issue | Storm Creek Issue |")
+    lines.append("| ISO week (starts) | Orders | Accuracy % | OCR | OCR/Email Format | PO | Storm Creek |")
     lines.append("|---|---|---|---|---|---|---|")
-    for d in trend:
-        lines.append(f"| {d['date']} | {d['total']} | {d['accurate']} | "
-                     f"{d['accuracy_pct']:.1f}% | {d['ocr']} | {d['po']} | {d['sc']} |")
+    for (y, w), recs in week_trend(labeled):
+        c = Counter(r["Issue related"] for r in recs)
+        start = min(r["_date"] for r in recs)
+        lines.append(f"| {y}-W{w:02d} ({start}) | {len(recs)} | {pct(acc_of(recs), len(recs)):.1f}% | "
+                     f"{c['OCR Issue']} | {c['OCR / Email Format']} | {c['PO Issue']} | {c['Storm Creek Issue']} |")
     lines.append("")
 
-    lines.append("## Error categorization (recurring themes in flagged orders)")
+    lines.append("## Daily trend (last 14 logged days)")
     lines.append("")
-    lines.append(f"Out of {len(issue_rows)} flagged orders, comment themes break down as "
-                 "(a single order can carry more than one theme):")
-    lines.append("")
-    lines.append("| Theme | Count | % of flagged orders |")
-    lines.append("|---|---|---|")
-    for name, count in themes.most_common():
-        lines.append(f"| {name} | {count} | {count/len(issue_rows)*100:.1f}% |")
-    lines.append("")
-
-    lines.append("## Accounts/distributors needing the most attention")
-    lines.append("")
-    lines.append("(Accounts with 15+ orders in the logged window, sorted worst first)")
-    lines.append("")
-    lines.append("| Distributor | Orders | Accuracy % |")
-    lines.append("|---|---|---|")
-    for d in dists[:10]:
-        lines.append(f"| {d['distributor']} | {d['total']} | {d['accuracy_pct']:.1f}% |")
+    lines.append("| Date | Labelled | Accurate | Accuracy % | OCR | OCR/Email Format | PO | Storm Creek |")
+    lines.append("|---|---|---|---|---|---|---|---|")
+    for d in sorted(last14):
+        recs = [r for r in labeled if r["_date"] == d]
+        c = Counter(r["Issue related"] for r in recs)
+        lines.append(f"| {d} | {len(recs)} | {acc_of(recs)} | {pct(acc_of(recs), len(recs)):.1f}% | "
+                     f"{c['OCR Issue']} | {c['OCR / Email Format']} | {c['PO Issue']} | {c['Storm Creek Issue']} |")
     lines.append("")
 
-    lines.append("## Associate accuracy (orders processed)")
+    lines.append("## Error categories (issue type, all-time vs last 14 days)")
+    lines.append("")
+    recent_issue = [r for r in issue_rows if r["_date"] in last14]
+    lines.append("| Category | All-time | Last 14d | Share of last-14d orders |")
+    lines.append("|---|---|---|---|")
+    rl = [r for r in labeled if r["_date"] in last14]
+    for cat in ISSUE_CATEGORIES:
+        ac = sum(1 for r in issue_rows if r["Issue related"] == cat)
+        rc = sum(1 for r in recent_issue if r["Issue related"] == cat)
+        lines.append(f"| {cat} | {ac} | {rc} | {pct(rc, len(rl)):.1f}% |")
+    lines.append("")
+
+    lines.append("## Error themes from reviewer comments (last 14 days vs. before)")
+    lines.append("")
+    older_issue = [r for r in issue_rows if r["_date"] not in last14]
+    tr, to = theme_breakdown(recent_issue), theme_breakdown(older_issue)
+    lines.append(f"Flagged orders: {len(recent_issue)} in last 14d, {len(older_issue)} earlier "
+                 "(one order can carry several themes).")
+    lines.append("")
+    lines.append("| Theme | Last 14d | % of flagged | Earlier % of flagged |")
+    lines.append("|---|---|---|---|")
+    for name, count in tr.most_common():
+        lines.append(f"| {name} | {count} | {pct(count, len(recent_issue)):.1f}% | "
+                     f"{pct(to[name], len(older_issue)):.1f}% |")
+    lines.append("")
+
+    sec = Counter(r["Secondary Cat for OCR Issue"].strip().lower().replace(" / ", "/")
+                  for r in issue_rows if r["Secondary Cat for OCR Issue"].strip())
+    if sec:
+        lines.append("## Secondary OCR category (where reviewers filled it in)")
+        lines.append("")
+        lines.append("| Category | Count |")
+        lines.append("|---|---|")
+        for k, v in sec.most_common(10):
+            lines.append(f"| {k} | {v} |")
+        lines.append("")
+
+    lines.append("## Accounts/distributors needing attention (last 14 logged days, 10+ orders)")
+    lines.append("")
+    lines.append("| Distributor | Orders | Accuracy % | All-time % | Top issue comments |")
+    lines.append("|---|---|---|---|---|")
+    by = defaultdict(list)
+    allby = defaultdict(list)
+    for r in labeled:
+        if r["Distributor"].strip():
+            allby[r["Distributor"]].append(r)
+            if r["_date"] in last14:
+                by[r["Distributor"]].append(r)
+    ranked = sorted(((d, v) for d, v in by.items() if len(v) >= 10),
+                    key=lambda x: pct(acc_of(x[1]), len(x[1])))
+    for d, v in ranked[:10]:
+        th = theme_breakdown([r for r in v if r["Issue related"] in ISSUE_CATEGORIES])
+        top = ", ".join(f"{k} ({c})" for k, c in th.most_common(2)) or "-"
+        lines.append(f"| {d} | {len(v)} | {pct(acc_of(v), len(v)):.1f}% | "
+                     f"{pct(acc_of(allby[d]), len(allby[d])):.1f}% | {top} |")
+    lines.append("")
+
+    lines.append("## Associate accuracy (last 14 logged days)")
     lines.append("")
     lines.append("| Processed By | Orders | Accuracy % |")
     lines.append("|---|---|---|")
-    for a in assocs:
-        lines.append(f"| {a['associate']} | {a['total']} | {a['accuracy_pct']:.1f}% |")
+    ab = defaultdict(list)
+    for r in rl:
+        if r["Processed By"].strip():
+            ab[r["Processed By"]].append(r)
+    for a, v in sorted(ab.items(), key=lambda x: -len(x[1])):
+        lines.append(f"| {a} | {len(v)} | {pct(acc_of(v), len(v)):.1f}% |")
     lines.append("")
 
+    lines.append(f"## Flagged orders on {latest} (for follow-up)")
+    lines.append("")
+    lines.append("| Msg ID | PO | Distributor | Type | Comment |")
+    lines.append("|---|---|---|---|---|")
+    for r in issue_rows:
+        if r["_date"] == latest:
+            cm = r["AX Comments"].replace("|", "/").replace("\n", " ")[:140]
+            lines.append(f"| {r['Message ID']} | {r['PO Number']} | {r['Distributor']} | "
+                         f"{r['Issue related']} | {cm} |")
+    lines.append("")
     return "\n".join(lines)
 
 
@@ -190,6 +266,7 @@ def main():
     if len(sys.argv) != 3:
         print(__doc__)
         sys.exit(1)
+    csv.field_size_limit(10**9)
     csv_path, out_path = sys.argv[1], sys.argv[2]
     rows = load_rows(csv_path)
     report_date = datetime.date.today().isoformat()
