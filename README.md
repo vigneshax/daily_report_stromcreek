@@ -13,16 +13,23 @@ Each run:
 ## Regenerating a report manually
 
 ```
-python3 scripts/generate_report.py path/to/live_orders.csv reports/YYYY-MM-DD.md
+python3 scripts/generate_report.py path/to/live_orders.csv reports/YYYY-MM-DD.md [REPORT_DAY]
 ```
 
-The CSV must have the header:
-`Sr No,Date,Week#,Allotment,Processed By,Message ID,Order Status,PO Number,Line,Product ID,Distributor,AX Comments,Issue related,TID`
+`REPORT_DAY` (YYYY-MM-DD) defaults to the latest date logged in the sheet.
+The report covers: report-day vs previous day / last 7 / prior 7 / ~month
+accuracy (overall and OCR-only), every flagged order that day, OCR error
+themes with week-over-week trend, daily and weekly trend tables, repeat-offender
+accounts, low-accuracy accounts, and an auto-ranked improvement list.
+
+Rows with a blank `Issue related` (duplicates, rejected files, no PO) are
+excluded from accuracy. "OCR accuracy" treats only `OCR Issue` and
+`OCR / Email Format` as errors; `PO Issue` and `Storm Creek Issue` are
+source-document problems tracked separately.
 
 ## Known limitation
 
-The Google Drive export used to pull the CSV only returns the sheet's default
-tab ("Live Orders") at full row fidelity. The spreadsheet's other tabs
-("Errors Encountered", "External Errors - Client", "Action Tracker",
-"Distributor Wise issues") are read at sample fidelity only and are folded
-into the report as qualitative context, not full row-level stats.
+Only the sheet's default tab ("Live Orders") is exported at full row fidelity.
+Other tabs (Shopify / BrandBook / Fully Automated / Manual Review orders,
+Action Tracker, Errors Encountered, External Errors - Client) are not yet
+part of the stats.
