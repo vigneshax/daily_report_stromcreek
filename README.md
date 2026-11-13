@@ -13,11 +13,24 @@ Each run:
 ## Regenerating a report manually
 
 ```
-python3 scripts/generate_report.py path/to/live_orders.csv reports/YYYY-MM-DD.md
+python3 scripts/generate_report.py path/to/live_orders.csv reports/YYYY-MM-DD.md [YYYY-MM-DD]
 ```
 
-The CSV must have the header:
-`Sr No,Date,Week#,Allotment,Processed By,Message ID,Order Status,PO Number,Line,Product ID,Distributor,AX Comments,Issue related,TID`
+The optional date is the focus day (defaults to the latest date in the sheet).
+Required columns: `Date, Processed By, PO Number, Distributor, AX Comments, Issue related`
+(extra columns such as `Secondary Cat for OCR Issue`, `Dev Notes`, `Status` are fine).
+
+## What the report contains
+- **Where to focus today** — auto summary: accuracy, rising error themes, likely systemic bugs,
+  recurring wrong codes/values, accounts slipping.
+- Overall accuracy (Accurate ÷ reviewed) and OCR accuracy (orders not flagged OCR Issue /
+  OCR / Email Format) for the focus day, previous day, last/prior 7 days, 30 days, all time.
+- OCR error themes (focus day / last 7 / prior 7 with trend).
+- Repeated identical reviewer comments (systemic bugs).
+- Accounts with the most OCR errors (14d) and biggest 7d-vs-prior-7d movers.
+- PO / Storm Creek-side issues, daily + weekly trend, every flagged order on the focus day,
+  reviewer flag rates.
+- Flags the focus day as partial when it has <60% of the normal daily volume.
 
 ## Known limitation
 
