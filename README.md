@@ -13,11 +13,15 @@ Each run:
 ## Regenerating a report manually
 
 ```
-python3 scripts/generate_report.py path/to/live_orders.csv reports/YYYY-MM-DD.md
+python3 scripts/generate_report.py path/to/live_orders.csv reports/YYYY-MM-DD.md [YYYY-MM-DD]
 ```
 
-The CSV must have the header:
-`Sr No,Date,Week#,Allotment,Processed By,Message ID,Order Status,PO Number,Line,Product ID,Distributor,AX Comments,Issue related,TID`
+The optional date is the run date; the report focuses on the latest logged day
+on or before it and compares against the previous 5 logged days, the prior
+10-day window (per account), and weekly history. Required columns:
+`Date, Processed By, PO Number, Distributor, AX Comments, Issue related`
+(extra columns are ignored). Rows with a blank *Issue related* are excluded
+from accuracy. Each report also gets a short hand-written "Where to act" block.
 
 ## Known limitation
 
