@@ -13,11 +13,17 @@ Each run:
 ## Regenerating a report manually
 
 ```
-python3 scripts/generate_report.py path/to/live_orders.csv reports/YYYY-MM-DD.md
+python3 scripts/generate_report.py path/to/live_orders.csv reports/YYYY-MM-DD.md [YYYY-MM-DD]
 ```
 
-The CSV must have the header:
-`Sr No,Date,Week#,Allotment,Processed By,Message ID,Order Status,PO Number,Line,Product ID,Distributor,AX Comments,Issue related,TID`
+Columns used: `Date, Processed By, Distributor, PO Number, AX Comments, Issue related`
+(plus `Secondary Cat for OCR Issue` when present). Extra columns are ignored.
+
+Accuracy = Accurate Orders ÷ reviewed orders (blank *Issue related* = not yet
+reviewed, excluded). The OCR error rate counts `OCR Issue` + `OCR / Email Format`.
+Each report compares the latest logged day against the last 7 and prior 7 logged
+days, breaks errors into comment-derived themes, and flags recurring accounts.
+A hand-written "Where improvement is needed" section is added per run.
 
 ## Known limitation
 
