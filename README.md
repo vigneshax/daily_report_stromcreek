@@ -13,11 +13,19 @@ Each run:
 ## Regenerating a report manually
 
 ```
-python3 scripts/generate_report.py path/to/live_orders.csv reports/YYYY-MM-DD.md
+python3 scripts/generate_report.py path/to/live_orders.csv reports/YYYY-MM-DD.md [YYYY-MM-DD]
 ```
 
-The CSV must have the header:
-`Sr No,Date,Week#,Allotment,Processed By,Message ID,Order Status,PO Number,Line,Product ID,Distributor,AX Comments,Issue related,TID`
+The optional last argument is the report day; it defaults to the latest date
+logged in the sheet. Columns are looked up by name (Date, Processed By, Order
+Status, PO Number, Distributor, AX Comments, Issue related, Secondary Cat for
+OCR Issue), so extra columns in the sheet are fine.
+
+Each report covers: today vs previous day / last 5 / last 20 logged days,
+every flagged order for the day, OCR error categories with week-over-week
+change, distributors with the most OCR issues and their trend, and a daily
+trend table. "OCR accuracy" counts only OCR Issue + OCR / Email Format as
+system errors (PO Issue and Storm Creek Issue are data-side).
 
 ## Known limitation
 
