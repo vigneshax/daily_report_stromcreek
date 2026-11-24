@@ -5,19 +5,23 @@ https://docs.google.com/spreadsheets/d/1SGFQmGZ59tKD4tdWKG3o1acZsZtZM85kN3sbUKUS
 
 Each run:
 1. Pulls the "Live Orders" sheet (CSV export via the Google Drive connector).
-2. Runs `scripts/generate_report.py` on that CSV to categorize errors ("Issue
-   related" + recurring themes in "AX Comments"), compute per-day/per-distributor/
-   per-associate accuracy, and flag where accuracy is weakest.
-3. Writes the result to `reports/YYYY-MM-DD.md`.
+2. Runs `scripts/generate_report.py` on that CSV. The report focuses on the
+   latest logged working day and covers: overall vs OCR (dev-fixable) accuracy
+   compared with the prior 5 and 20 days; error themes from "AX Comments" with
+   the 7-day rate vs the prior 21 days; that day's OCR issues to action;
+   daily and weekly trends; worsening, improving and chronic distributors; and
+   associate volume.
+3. Writes the result to `reports/<run-date>.md` with analyst notes at the top.
 
 ## Regenerating a report manually
 
 ```
-python3 scripts/generate_report.py path/to/live_orders.csv reports/YYYY-MM-DD.md
+python3 scripts/generate_report.py path/to/live_orders.csv reports/YYYY-MM-DD.md [report-day YYYY-MM-DD]
 ```
 
-The CSV must have the header:
-`Sr No,Date,Week#,Allotment,Processed By,Message ID,Order Status,PO Number,Line,Product ID,Distributor,AX Comments,Issue related,TID`
+Required columns: `Date, Processed By, PO Number, Distributor, AX Comments, Issue related`.
+Optional columns: `Secondary Cat for OCR Issue`.
+Rows with a blank "Issue related" are counted as unlabeled and left out of accuracy figures.
 
 ## Known limitation
 
