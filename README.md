@@ -5,15 +5,22 @@ https://docs.google.com/spreadsheets/d/1SGFQmGZ59tKD4tdWKG3o1acZsZtZM85kN3sbUKUS
 
 Each run:
 1. Pulls the "Live Orders" sheet (CSV export via the Google Drive connector).
-2. Runs `scripts/generate_report.py` on that CSV to categorize errors ("Issue
-   related" + recurring themes in "AX Comments"), compute per-day/per-distributor/
-   per-associate accuracy, and flag where accuracy is weakest.
-3. Writes the result to `reports/YYYY-MM-DD.md`.
+2. Runs `scripts/generate_report.py` on that CSV. The report covers the latest
+   logged day and compares it with the previous 7 logged days and the previous 30 days:
+   - OCR accuracy (excludes PO and Storm Creek issues) and overall accuracy
+   - that day's OCR errors, grouped into field-level themes from "AX Comments"
+     (account number, ship method, part ID, RG, STC, order type, ...)
+   - a weekly theme trend over 4 weeks
+   - distributors with errors that day plus their 30-day history, and the
+     accounts with recurring problems
+   - each reviewer's flag rates
+   - a ranked list of what to fix next
+3. Writes the result to `reports/<report-day>.md`.
 
 ## Regenerating a report manually
 
 ```
-python3 scripts/generate_report.py path/to/live_orders.csv reports/YYYY-MM-DD.md
+python3 scripts/generate_report.py path/to/live_orders.csv reports/YYYY-MM-DD.md [YYYY-MM-DD]
 ```
 
 The CSV must have the header:
