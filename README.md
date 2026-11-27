@@ -5,19 +5,26 @@ https://docs.google.com/spreadsheets/d/1SGFQmGZ59tKD4tdWKG3o1acZsZtZM85kN3sbUKUS
 
 Each run:
 1. Pulls the "Live Orders" sheet (CSV export via the Google Drive connector).
-2. Runs `scripts/generate_report.py` on that CSV to categorize errors ("Issue
-   related" + recurring themes in "AX Comments"), compute per-day/per-distributor/
-   per-associate accuracy, and flag where accuracy is weakest.
+2. Runs `scripts/generate_report.py` on that CSV. The report covers:
+   - Latest logged day vs the prior 7 logged days, month-to-date and all-time
+     (overall accuracy and OCR-only accuracy, which leaves out PO-side issues)
+   - Weekly and last-10-day trend
+   - OCR error themes from reviewer comments, with 7-day vs 28-day trend
+   - An action list of every OCR issue on the latest day
+   - Distributors with the lowest OCR accuracy over the last 14 days, the biggest
+     movers, and the accounts with the most issues over time
+   - Customer-side (PO Issue) themes and each reviewer's flag rate
 3. Writes the result to `reports/YYYY-MM-DD.md`.
 
 ## Regenerating a report manually
 
 ```
-python3 scripts/generate_report.py path/to/live_orders.csv reports/YYYY-MM-DD.md
+python3 scripts/generate_report.py path/to/live_orders.csv reports/YYYY-MM-DD.md [YYYY-MM-DD]
 ```
 
-The CSV must have the header:
-`Sr No,Date,Week#,Allotment,Processed By,Message ID,Order Status,PO Number,Line,Product ID,Distributor,AX Comments,Issue related,TID`
+Needed columns: `Date, Processed By, PO Number, Distributor, AX Comments, Issue related`
+(optional: `Dev Notes`, `Status`). Rows with a blank "Issue related" are left out
+(duplicates, rejected files, or orders not yet reviewed).
 
 ## Known limitation
 
